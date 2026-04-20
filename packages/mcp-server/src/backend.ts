@@ -1145,6 +1145,174 @@ async function processMapGenerationInBackend(
   }
 }
 
+/**
+ * Start optional HTTP transport for local LLM clients (LM Studio, etc.)
+ *
+ * Security model — local LLM only, not internet-facing:
+ * 1. Binds to 127.0.0.1 by default (config.http.host)
+ * 2. Checks Origin header to prevent drive-by browser attacks
+ * 3. Optional bearer token (MCP_HTTP_AUTH_TOKEN) — when set, required on every request
+ *
+ * DO NOT bind to 0.0.0.0 or expose via tunnels without hardening — this is designed
+ * for localhost communication with local LLM clients, not remote/cloud LLMs.
+ */
+async function startHttpTransport(
+  httpConfig: { enabled: boolean; host: string; port: number; authToken?: string | undefined },
+  allTools: any[],
+  dispatchTool: (name: string, args: any) => Promise<any>,
+  logger: Logger
+): Promise<void> {
+  const http = await import('http');
+
+  // Origins considered safe for localhost LM Studio-style clients
+  const isAllowedOrigin = (origin: string | undefined | null): boolean => {
+    if (!origin || origin === 'null') return true; // no Origin header or curl/native client
+    try {
+      const url = new URL(origin);
+      const host = url.hostname;
+      return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    } catch {
+      return false;
+    }
+  };
+
+  const isAuthorized = (req: import('http').IncomingMessage): boolean => {
+    if (!httpConfig.authToken) return true; // No token configured — allow (localhost already bound)
+    const header = req.headers['authorization'];
+    if (typeof header !== 'string') return false;
+    const parts = header.split(' ');
+    return (
+      parts.length === 2 &&
+      parts[0]!.toLowerCase() === 'bearer' &&
+      parts[1] === httpConfig.authToken
+    );
+  };
+
+  const writeJson = (res: import('http').ServerResponse, statusCode: number, body: any): void => {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(body));
+  };
+
+  const readBody = (req: import('http').IncomingMessage): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      req.on('error', reject);
+    });
+  };
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const origin = req.headers['origin'] as string | undefined;
+      if (!isAllowedOrigin(origin)) {
+        logger.warn('HTTP request rejected — disallowed origin', { origin, url: req.url });
+        writeJson(res, 403, { error: 'Origin not allowed' });
+        return;
+      }
+
+      if (!isAuthorized(req)) {
+        res.setHeader('WWW-Authenticate', 'Bearer');
+        writeJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+
+      // Health endpoint — useful for LM Studio connection verification
+      if (req.url === '/health' && req.method === 'GET') {
+        writeJson(res, 200, { status: 'ok', toolCount: allTools.length });
+        return;
+      }
+
+      // MCP JSON-RPC endpoint
+      if (req.url === '/mcp' && req.method === 'POST') {
+        const bodyText = await readBody(req);
+        let body: any;
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          writeJson(res, 400, {
+            jsonrpc: '2.0',
+            error: { code: -32700, message: 'Parse error' },
+            id: null,
+          });
+          return;
+        }
+
+        const { id, method, params } = body as {
+          id?: string | number;
+          method?: string;
+          params?: any;
+        };
+
+        if (method === 'tools/list') {
+          writeJson(res, 200, { jsonrpc: '2.0', id: id ?? null, result: { tools: allTools } });
+          return;
+        }
+
+        if (method === 'tools/call') {
+          const { name, arguments: args } = (params || {}) as { name?: string; arguments?: any };
+          if (!name) {
+            writeJson(res, 400, {
+              jsonrpc: '2.0',
+              id: id ?? null,
+              error: { code: -32602, message: 'Missing tool name' },
+            });
+            return;
+          }
+          try {
+            const result = await dispatchTool(name, args ?? {});
+            const payload = {
+              content: [
+                {
+                  type: 'text',
+                  text: typeof result === 'string' ? result : JSON.stringify(result),
+                },
+              ],
+            };
+            writeJson(res, 200, { jsonrpc: '2.0', id: id ?? null, result: payload });
+          } catch (err: any) {
+            const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+            writeJson(res, 200, {
+              jsonrpc: '2.0',
+              id: id ?? null,
+              result: {
+                content: [{ type: 'text', text: `Error: ${errorMessage}` }],
+                isError: true,
+              },
+            });
+          }
+          return;
+        }
+
+        writeJson(res, 400, {
+          jsonrpc: '2.0',
+          id: id ?? null,
+          error: { code: -32601, message: 'Method not found' },
+        });
+        return;
+      }
+
+      writeJson(res, 404, { error: 'Not found' });
+    } catch (err: any) {
+      logger.error('HTTP transport request handling failed', {
+        error: err?.message || String(err),
+      });
+      writeJson(res, 500, { error: 'Internal server error' });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(httpConfig.port, httpConfig.host, () => {
+      logger.info(`HTTP transport listening on ${httpConfig.host}:${httpConfig.port}`, {
+        authRequired: !!httpConfig.authToken,
+      });
+      resolve();
+    });
+    server.on('error', reject);
+  });
+}
+
 async function startBackend(): Promise<void> {
   // Logger: file output allowed; avoid stdout noise
 
@@ -1536,306 +1704,7 @@ async function startBackend(): Promise<void> {
             const { name, args } = (msg.params || {}) as { name: string; args?: any };
 
             try {
-              let result: any;
-
-              switch (name) {
-                // Character tools
-
-                case 'get-character':
-                  result = await characterTools.handleGetCharacter(args);
-
-                  break;
-
-                case 'list-characters':
-                  result = await characterTools.handleListCharacters(args);
-
-                  break;
-
-                case 'get-character-entity':
-                  result = await characterTools.handleGetCharacterEntity(args);
-
-                  break;
-
-                case 'use-item':
-                  result = await characterTools.handleUseItem(args);
-
-                  break;
-
-                case 'search-character-items':
-                  result = await characterTools.handleSearchCharacterItems(args);
-
-                  break;
-
-                case 'manage-world-items':
-                  result = await characterTools.handleManageWorldItems(args);
-
-                  break;
-
-                // Compendium tools
-
-                case 'search-compendium':
-                  result = await compendiumTools.handleSearchCompendium(args);
-
-                  break;
-
-                case 'get-compendium-item':
-                  result = await compendiumTools.handleGetCompendiumItem(args);
-
-                  break;
-
-                case 'list-creatures-by-criteria':
-                  result = await compendiumTools.handleListCreaturesByCriteria(args);
-
-                  break;
-
-                case 'list-compendium-packs':
-                  result = await compendiumTools.handleListCompendiumPacks(args);
-
-                  break;
-
-                // Scene tools
-
-                case 'get-current-scene':
-                  result = await sceneTools.handleGetCurrentScene(args);
-
-                  break;
-
-                case 'get-world-info':
-                  result = await sceneTools.handleGetWorldInfo(args);
-
-                  break;
-
-                // Actor creation tools
-
-                case 'create-actor-from-compendium':
-                  result = await actorCreationTools.handleCreateActorFromCompendium(args);
-
-                  break;
-
-                case 'get-compendium-entry-full':
-                  result = await actorCreationTools.handleGetCompendiumEntryFull(args);
-
-                  break;
-
-                case 'wfrp4e-update-actor':
-                  result = await wfrp4eUpdateActorTools.handleUpdateActor(args);
-
-                  break;
-
-                case 'wfrp4e-add-items':
-                  result = await wfrp4eAddItemsTools.handleAddItems(args);
-
-                  break;
-
-                case 'pf2e-create-shop':
-                  result = await pf2eCreateShopTools.handleCreateShop(args);
-
-                  break;
-
-                case 'duplicate-actor':
-                  result = await duplicateActorTools.handleDuplicateActor(args);
-
-                  break;
-
-                case 'manage-flags':
-                  result = await moduleDataTools.handleManageFlags(args);
-
-                  break;
-
-                case 'manage-module-settings':
-                  result = await moduleDataTools.handleManageModuleSettings(args);
-
-                  break;
-
-                // Generic actor management (create / update / delete)
-
-                case 'manage-actors':
-                  result = await actorManagementTools.handleManageActors(args);
-
-                  break;
-
-                case 'manage-effects':
-                  result = await effectManagementTools.handleManageEffects(args);
-
-                  break;
-
-                // DSA5 character creation tools
-
-                case 'create-dsa5-character-from-archetype':
-                  result = await dsa5CharacterCreator.handleCreateCharacterFromArchetype(args);
-
-                  break;
-
-                case 'list-dsa5-archetypes':
-                  result = await dsa5CharacterCreator.handleListArchetypes(args);
-
-                  break;
-
-                case 'import-dsa5-actor-from-json':
-                  result = await dsa5JsonActorImporter.handleImportActorFromJson(args);
-
-                  break;
-
-                // D&D 5e tools
-
-                case 'dnd5e-add-feature':
-                  result = await dnd5eAddFeatureTool.handleAddFeature(args);
-
-                  break;
-
-                case 'dnd5e-create-npc':
-                  result = await dnd5eNpcTools.handleCreateNpc(args);
-
-                  break;
-
-                case 'dnd5e-add-features-from-compendium':
-                  result =
-                    await dnd5eFeaturesFromCompendiumTools.handleAddFeaturesFromCompendium(args);
-
-                  break;
-
-                // Quest creation tools
-
-                case 'create-quest-journal':
-                  result = await questCreationTools.handleCreateQuestJournal(args);
-
-                  break;
-
-                case 'link-quest-to-npc':
-                  result = await questCreationTools.handleLinkQuestToNPC(args);
-
-                  break;
-
-                case 'update-quest-journal':
-                  result = await questCreationTools.handleUpdateQuestJournal(args);
-
-                  break;
-
-                case 'replace-journal-page':
-                  result = await questCreationTools.handleReplaceJournalPage(args);
-
-                  break;
-
-                case 'list-journals':
-                  result = await questCreationTools.handleListJournals(args);
-
-                  break;
-
-                case 'search-journals':
-                  result = await questCreationTools.handleSearchJournals(args);
-
-                  break;
-
-                // Dice roll tools
-
-                case 'request-player-rolls':
-                  result = await diceRollTools.handleRequestPlayerRolls(args);
-
-                  break;
-
-                // Campaign management tools
-
-                case 'create-campaign-dashboard':
-                  result = await campaignManagementTools.handleCreateCampaignDashboard(args);
-
-                  break;
-
-                // Ownership tools
-
-                case 'assign-actor-ownership':
-                  result = await ownershipTools.handleToolCall('assign-actor-ownership', args);
-
-                  break;
-
-                case 'remove-actor-ownership':
-                  result = await ownershipTools.handleToolCall('remove-actor-ownership', args);
-
-                  break;
-
-                case 'list-actor-ownership':
-                  result = await ownershipTools.handleToolCall('list-actor-ownership', args);
-
-                  break;
-
-                // Token manipulation tools
-
-                case 'move-token':
-                  result = await tokenManipulationTools.handleMoveToken(args);
-
-                  break;
-
-                case 'update-token':
-                  result = await tokenManipulationTools.handleUpdateToken(args);
-
-                  break;
-
-                case 'delete-tokens':
-                  result = await tokenManipulationTools.handleDeleteTokens(args);
-
-                  break;
-
-                case 'get-token-details':
-                  result = await tokenManipulationTools.handleGetTokenDetails(args);
-
-                  break;
-
-                case 'toggle-token-condition':
-                  result = await tokenManipulationTools.handleToggleTokenCondition(args);
-
-                  break;
-
-                case 'get-available-conditions':
-                  result = await tokenManipulationTools.handleGetAvailableConditions(args);
-
-                  break;
-
-                // Map generation tools
-
-                case 'generate-map':
-                  result = await mapGenerationTools.generateMap(args);
-
-                  break;
-
-                case 'check-map-status':
-                  result = await mapGenerationTools.checkMapStatus(args);
-
-                  break;
-
-                case 'cancel-map-job':
-                  result = await mapGenerationTools.cancelMapJob(args);
-
-                  break;
-
-                case 'list-scenes':
-                  result = await mapGenerationTools.listScenes(args);
-
-                  break;
-
-                case 'switch-scene':
-                  result = await mapGenerationTools.switchScene(args);
-
-                  break;
-
-                // Playlist management tools
-
-                case 'manage-playlists':
-                  result = await playlistTools.handleManagePlaylists(args);
-
-                  break;
-
-                case 'control-playlist':
-                  result = await playlistTools.handleControlPlaylist(args);
-
-                  break;
-
-                case 'update-scene-music':
-                  result = await sceneTools.handleUpdateSceneMusic(args);
-
-                  break;
-
-                default:
-                  throw new Error(`Unknown tool: ${name}`);
-              }
+              const result = await dispatchTool(name, args);
 
               const payload = {
                 content: [
@@ -1864,8 +1733,6 @@ async function startBackend(): Promise<void> {
             continue;
           }
 
-          // Unknown method
-
           socket.write(JSON.stringify({ id: msg.id, error: { message: 'Unknown method' } }) + '\n');
         } catch (e: any) {
           try {
@@ -1878,6 +1745,311 @@ async function startBackend(): Promise<void> {
     });
   });
 
+  // Central tool dispatcher - shared by TCP control channel and HTTP transport
+  async function dispatchTool(name: string, args: any): Promise<any> {
+    let result: any;
+
+    switch (name) {
+      // Character tools
+
+      case 'get-character':
+        result = await characterTools.handleGetCharacter(args);
+
+        break;
+
+      case 'list-characters':
+        result = await characterTools.handleListCharacters(args);
+
+        break;
+
+      case 'get-character-entity':
+        result = await characterTools.handleGetCharacterEntity(args);
+
+        break;
+
+      case 'use-item':
+        result = await characterTools.handleUseItem(args);
+
+        break;
+
+      case 'search-character-items':
+        result = await characterTools.handleSearchCharacterItems(args);
+
+        break;
+
+      case 'manage-world-items':
+        result = await characterTools.handleManageWorldItems(args);
+
+        break;
+
+      // Compendium tools
+
+      case 'search-compendium':
+        result = await compendiumTools.handleSearchCompendium(args);
+
+        break;
+
+      case 'get-compendium-item':
+        result = await compendiumTools.handleGetCompendiumItem(args);
+
+        break;
+
+      case 'list-creatures-by-criteria':
+        result = await compendiumTools.handleListCreaturesByCriteria(args);
+
+        break;
+
+      case 'list-compendium-packs':
+        result = await compendiumTools.handleListCompendiumPacks(args);
+
+        break;
+
+      // Scene tools
+
+      case 'get-current-scene':
+        result = await sceneTools.handleGetCurrentScene(args);
+
+        break;
+
+      case 'get-world-info':
+        result = await sceneTools.handleGetWorldInfo(args);
+
+        break;
+
+      // Actor creation tools
+
+      case 'create-actor-from-compendium':
+        result = await actorCreationTools.handleCreateActorFromCompendium(args);
+
+        break;
+
+      case 'get-compendium-entry-full':
+        result = await actorCreationTools.handleGetCompendiumEntryFull(args);
+
+        break;
+
+      case 'wfrp4e-update-actor':
+        result = await wfrp4eUpdateActorTools.handleUpdateActor(args);
+
+        break;
+
+      case 'wfrp4e-add-items':
+        result = await wfrp4eAddItemsTools.handleAddItems(args);
+
+        break;
+
+      case 'pf2e-create-shop':
+        result = await pf2eCreateShopTools.handleCreateShop(args);
+
+        break;
+
+      case 'duplicate-actor':
+        result = await duplicateActorTools.handleDuplicateActor(args);
+
+        break;
+
+      case 'manage-flags':
+        result = await moduleDataTools.handleManageFlags(args);
+
+        break;
+
+      case 'manage-module-settings':
+        result = await moduleDataTools.handleManageModuleSettings(args);
+
+        break;
+
+      // Generic actor management (create / update / delete)
+
+      case 'manage-actors':
+        result = await actorManagementTools.handleManageActors(args);
+
+        break;
+
+      case 'manage-effects':
+        result = await effectManagementTools.handleManageEffects(args);
+
+        break;
+
+      // DSA5 character creation tools
+
+      case 'create-dsa5-character-from-archetype':
+        result = await dsa5CharacterCreator.handleCreateCharacterFromArchetype(args);
+
+        break;
+
+      case 'list-dsa5-archetypes':
+        result = await dsa5CharacterCreator.handleListArchetypes(args);
+
+        break;
+
+      case 'import-dsa5-actor-from-json':
+        result = await dsa5JsonActorImporter.handleImportActorFromJson(args);
+
+        break;
+
+      // D&D 5e tools
+
+      case 'dnd5e-add-feature':
+        result = await dnd5eAddFeatureTool.handleAddFeature(args);
+
+        break;
+
+      case 'dnd5e-create-npc':
+        result = await dnd5eNpcTools.handleCreateNpc(args);
+
+        break;
+
+      case 'dnd5e-add-features-from-compendium':
+        result = await dnd5eFeaturesFromCompendiumTools.handleAddFeaturesFromCompendium(args);
+
+        break;
+
+      // Quest creation tools
+
+      case 'create-quest-journal':
+        result = await questCreationTools.handleCreateQuestJournal(args);
+
+        break;
+
+      case 'link-quest-to-npc':
+        result = await questCreationTools.handleLinkQuestToNPC(args);
+
+        break;
+
+      case 'update-quest-journal':
+        result = await questCreationTools.handleUpdateQuestJournal(args);
+
+        break;
+
+      case 'replace-journal-page':
+        result = await questCreationTools.handleReplaceJournalPage(args);
+
+        break;
+
+      case 'list-journals':
+        result = await questCreationTools.handleListJournals(args);
+
+        break;
+
+      case 'search-journals':
+        result = await questCreationTools.handleSearchJournals(args);
+
+        break;
+
+      // Dice roll tools
+
+      case 'request-player-rolls':
+        result = await diceRollTools.handleRequestPlayerRolls(args);
+
+        break;
+
+      // Campaign management tools
+
+      case 'create-campaign-dashboard':
+        result = await campaignManagementTools.handleCreateCampaignDashboard(args);
+
+        break;
+
+      // Ownership tools
+
+      case 'assign-actor-ownership':
+        result = await ownershipTools.handleToolCall('assign-actor-ownership', args);
+
+        break;
+
+      case 'remove-actor-ownership':
+        result = await ownershipTools.handleToolCall('remove-actor-ownership', args);
+
+        break;
+
+      case 'list-actor-ownership':
+        result = await ownershipTools.handleToolCall('list-actor-ownership', args);
+
+        break;
+
+      // Token manipulation tools
+
+      case 'move-token':
+        result = await tokenManipulationTools.handleMoveToken(args);
+
+        break;
+
+      case 'update-token':
+        result = await tokenManipulationTools.handleUpdateToken(args);
+
+        break;
+
+      case 'delete-tokens':
+        result = await tokenManipulationTools.handleDeleteTokens(args);
+
+        break;
+
+      case 'get-token-details':
+        result = await tokenManipulationTools.handleGetTokenDetails(args);
+
+        break;
+
+      case 'toggle-token-condition':
+        result = await tokenManipulationTools.handleToggleTokenCondition(args);
+
+        break;
+
+      case 'get-available-conditions':
+        result = await tokenManipulationTools.handleGetAvailableConditions(args);
+
+        break;
+
+      // Map generation tools
+
+      case 'generate-map':
+        result = await mapGenerationTools.generateMap(args);
+
+        break;
+
+      case 'check-map-status':
+        result = await mapGenerationTools.checkMapStatus(args);
+
+        break;
+
+      case 'cancel-map-job':
+        result = await mapGenerationTools.cancelMapJob(args);
+
+        break;
+
+      case 'list-scenes':
+        result = await mapGenerationTools.listScenes(args);
+
+        break;
+
+      case 'switch-scene':
+        result = await mapGenerationTools.switchScene(args);
+
+        break;
+
+      // Playlist management tools
+
+      case 'manage-playlists':
+        result = await playlistTools.handleManagePlaylists(args);
+
+        break;
+
+      case 'control-playlist':
+        result = await playlistTools.handleControlPlaylist(args);
+
+        break;
+
+      case 'update-scene-music':
+        result = await sceneTools.handleUpdateSceneMusic(args);
+
+        break;
+
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+
+    return result;
+  }
+
   await new Promise<void>((resolve, reject) => {
     server.listen(CONTROL_PORT, CONTROL_HOST, () => {
       logger.info(`Backend control channel listening on ${CONTROL_HOST}:${CONTROL_PORT}`);
@@ -1887,6 +2059,12 @@ async function startBackend(): Promise<void> {
 
     server.on('error', reject);
   });
+
+  // Optional HTTP transport for local LLM clients (LM Studio, etc.)
+
+  if (config.http.enabled) {
+    await startHttpTransport(config.http, allTools, dispatchTool, logger);
+  }
 
   void autoStartComfyUI();
 
