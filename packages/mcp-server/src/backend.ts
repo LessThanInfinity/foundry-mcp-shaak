@@ -36,6 +36,7 @@ import { CampaignManagementTools } from './tools/campaign-management.js';
 import { OwnershipTools } from './tools/ownership.js';
 import { WFRP4eUpdateActorTools } from './tools/wfrp4e/update-actor.js';
 import { WFRP4eAddItemsTools } from './tools/wfrp4e/add-items.js';
+import { PF2eCreateShopTools } from './tools/pf2e/create-shop.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1223,6 +1224,8 @@ async function startBackend(): Promise<void> {
   const wfrp4eUpdateActorTools = new WFRP4eUpdateActorTools({ foundryClient, logger });
   const wfrp4eAddItemsTools = new WFRP4eAddItemsTools({ foundryClient, logger });
 
+  const pf2eCreateShopTools = new PF2eCreateShopTools({ foundryClient, logger });
+
   // Initialize mapgen-style backend components for map generation
   let mapGenerationJobQueue: any = null;
   let mapGenerationComfyUIClient: any = null;
@@ -1449,6 +1452,8 @@ async function startBackend(): Promise<void> {
 
     ...wfrp4eAddItemsTools.getToolDefinitions(),
 
+    ...pf2eCreateShopTools.getToolDefinitions(),
+
     ...tokenManipulationTools.getToolDefinitions(),
 
     ...mapGenerationTools.getToolDefinitions(),
@@ -1604,6 +1609,11 @@ async function startBackend(): Promise<void> {
 
                 case 'wfrp4e-add-items':
                   result = await wfrp4eAddItemsTools.handleAddItems(args);
+
+                  break;
+
+                case 'pf2e-create-shop':
+                  result = await pf2eCreateShopTools.handleCreateShop(args);
 
                   break;
 
