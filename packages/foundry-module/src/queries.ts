@@ -99,6 +99,9 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.updateWfrp4eActor`] = this.handleUpdateWfrp4eActor.bind(this);
     CONFIG.queries[`${modulePrefix}.addWfrp4eItems`] = this.handleAddWfrp4eItems.bind(this);
 
+    // PF2e merchant shop creation
+    CONFIG.queries[`${modulePrefix}.createPf2eShop`] = this.handleCreatePf2eShop.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -940,6 +943,32 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to add WFRP4e items: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Create a PF2e Loot actor in Merchant mode stocked from the installed
+   * compendiums. GM-only.
+   */
+  async handleCreatePf2eShop(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.name) {
+        throw new Error('name is required');
+      }
+
+      return await this.dataAccess.createPf2eShop(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to create PF2e shop: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

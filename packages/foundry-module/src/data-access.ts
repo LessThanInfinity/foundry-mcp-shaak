@@ -6847,6 +6847,192 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Create a PF2e shop: a Loot actor in Merchant mode, stocked with physical items
+   * copied from the installed PF2e compendiums. Items can be named explicitly and/or
+   * drawn at random from the compendium index by level, rarity, type and traits.
+   */
+  async createPf2eShop(data: {
+    name: string;
+    folder?: string;
+    items?: Array<{ name: string; quantity?: number; pack?: string }>;
+    random?: {
+      count: number;
+      minLevel?: number;
+      maxLevel?: number;
+      rarities?: string[];
+      types?: string[];
+      traits?: string[];
+      maxQuantity?: number;
+    };
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const systemId = (game.system as any).id;
+    if (systemId !== 'pf2e') {
+      return {
+        success: false,
+        error: `pf2e-create-shop requires the PF2e system (current: "${systemId}")`,
+      };
+    }
+
+    const permissionCheck = permissionManager.checkWritePermission('createActor', { quantity: 1 });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+    permissionManager.auditPermissionCheck('createActor', permissionCheck, data);
+
+    const PHYSICAL_TYPES = new Set([
+      'weapon',
+      'armor',
+      'shield',
+      'equipment',
+      'consumable',
+      'treasure',
+      'backpack',
+    ]);
+    const getProp = (obj: any, path: string) => foundry.utils.getProperty(obj, path);
+
+    // Candidate Item packs, the core equipment compendium first so a name shared
+    // across books resolves to the canonical entry.
+    const itemPacks: any[] = Array.from((game.packs as any) || []).filter(
+      (p: any) => (p.metadata?.type ?? p.documentName) === 'Item'
+    );
+    itemPacks.sort((a: any, b: any) => {
+      const rank = (p: any) => (p.metadata?.id === 'pf2e.equipment-srd' ? 0 : 1);
+      return rank(a) - rank(b);
+    });
+
+    // Per-call index cache, loaded with the fields the random filters need.
+    const indexCache = new Map<string, any[]>();
+    const getIndex = async (pack: any): Promise<any[]> => {
+      const id = pack.metadata.id;
+      if (!indexCache.has(id)) {
+        const index = await pack.getIndex({
+          fields: ['system.level.value', 'system.traits.rarity', 'system.traits.value'],
+        });
+        indexCache.set(
+          id,
+          Array.from(index as any).filter((e: any) => PHYSICAL_TYPES.has(e.type))
+        );
+      }
+      return indexCache.get(id)!;
+    };
+
+    type Pick = { pack: any; entryId: string; quantity: number };
+    const picks: Pick[] = [];
+    const notFound: string[] = [];
+
+    for (const req of data.items ?? []) {
+      const nameLower = req.name.toLowerCase();
+      const searchPacks = req.pack
+        ? itemPacks.filter(
+            (p: any) => p.metadata.id === req.pack || p.metadata.id.includes(req.pack as string)
+          )
+        : itemPacks;
+
+      let found: Pick | undefined;
+      for (const pack of searchPacks) {
+        const entry = (await getIndex(pack)).find((e: any) => e.name?.toLowerCase() === nameLower);
+        if (entry) {
+          found = { pack, entryId: entry._id, quantity: req.quantity ?? 1 };
+          break;
+        }
+      }
+      if (found) picks.push(found);
+      else notFound.push(req.name);
+    }
+
+    let randomShortfall = 0;
+    if (data.random) {
+      const r = data.random;
+      const rarities = new Set(r.rarities?.length ? r.rarities : ['common']);
+      const types = r.types?.length ? new Set(r.types) : PHYSICAL_TYPES;
+      const traits = r.traits?.map(t => t.toLowerCase());
+      const alreadyPicked = new Set(picks.map(p => `${p.pack.metadata.id}::${p.entryId}`));
+
+      // Deduplicate by name so the same item from several books is drawn once.
+      const pool = new Map<string, { pack: any; entryId: string }>();
+      for (const pack of itemPacks) {
+        for (const entry of await getIndex(pack)) {
+          const level = Number(getProp(entry, 'system.level.value') ?? 0);
+          const rarity = getProp(entry, 'system.traits.rarity') ?? 'common';
+          const entryTraits: string[] = getProp(entry, 'system.traits.value') ?? [];
+          if (!types.has(entry.type)) continue;
+          if (r.minLevel !== undefined && level < r.minLevel) continue;
+          if (r.maxLevel !== undefined && level > r.maxLevel) continue;
+          if (!rarities.has(rarity)) continue;
+          if (traits && !entryTraits.some(t => traits.includes(String(t).toLowerCase()))) continue;
+          if (alreadyPicked.has(`${pack.metadata.id}::${entry._id}`)) continue;
+          const key = String(entry.name).toLowerCase();
+          if (!pool.has(key)) pool.set(key, { pack, entryId: entry._id });
+        }
+      }
+
+      const candidates = Array.from(pool.values());
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      }
+      const drawn = candidates.slice(0, r.count);
+      randomShortfall = r.count - drawn.length;
+      const maxQty = r.maxQuantity ?? 1;
+      for (const c of drawn) {
+        picks.push({ ...c, quantity: 1 + Math.floor(Math.random() * maxQty) });
+      }
+    }
+
+    if (picks.length === 0) {
+      return {
+        success: false,
+        error: 'No matching items found; shop not created',
+        notFound,
+      };
+    }
+
+    // Copy full item data from the compendium, quantity baked into creation data.
+    const toCreate: Array<Record<string, any>> = [];
+    for (const p of picks) {
+      const doc = await p.pack.getDocument(p.entryId);
+      if (!doc) continue;
+      const obj = doc.toObject();
+      delete obj._id;
+      obj.system = obj.system || {};
+      obj.system.quantity = p.quantity;
+      toCreate.push(obj);
+    }
+
+    const folderId = data.folder ? await this.getOrCreateFolder(data.folder, 'Actor') : null;
+    const actor = await (Actor as any).create({
+      name: data.name,
+      type: 'loot',
+      folder: folderId,
+      system: { lootSheetType: 'Merchant' },
+    });
+    if (!actor) {
+      return { success: false, error: 'Failed to create Loot actor' };
+    }
+
+    const created = await actor.createEmbeddedDocuments('Item', toCreate);
+
+    return {
+      success: true,
+      actorId: actor.id,
+      actorName: actor.name,
+      itemCount: created.length,
+      items: created.map((i: any) => ({
+        name: i.name,
+        type: i.type,
+        level: getProp(i, 'system.level.value'),
+        quantity: getProp(i, 'system.quantity'),
+      })),
+      ...(notFound.length > 0 && { notFound }),
+      ...(randomShortfall > 0 && {
+        warning: `Only ${data.random!.count - randomShortfall} of ${data.random!.count} random items matched the filters`,
+      }),
+    };
+  }
+
+  /**
    * Update a WFRP4e actor's stat block (characteristics and/or wounds).
    * Writes initial/advances/modifier and wounds value/max; WFRP4e recomputes
    * the derived characteristic value/bonus on update.
