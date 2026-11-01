@@ -6847,6 +6847,168 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Read or write module flags (flags.<scope>.<key>) on any document, addressed by
+   * UUID or, for actors, by name/id. Writes need Allow Write Operations; the
+   * "core" scope is refused.
+   */
+  async manageFlags(data: {
+    action: 'get' | 'set' | 'unset';
+    uuid?: string;
+    actor?: string;
+    scope: string;
+    key?: string;
+    value?: unknown;
+    replace?: boolean;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    if (data.scope === 'core') {
+      return { success: false, error: 'The "core" flag scope is not accessible' };
+    }
+
+    const doc: any = data.uuid
+      ? await fromUuid(data.uuid)
+      : data.actor
+        ? this.findActorByIdentifier(data.actor)
+        : null;
+    if (!doc) {
+      return { success: false, error: `Document not found: ${data.uuid ?? data.actor}` };
+    }
+    if (typeof doc.getFlag !== 'function') {
+      return { success: false, error: `${data.uuid ?? data.actor} does not support flags` };
+    }
+    const target = { uuid: doc.uuid, name: doc.name, documentName: doc.documentName };
+
+    if (data.action === 'get') {
+      const value = data.key
+        ? doc.getFlag(data.scope, data.key)
+        : foundry.utils.getProperty(doc.flags ?? {}, data.scope);
+      return {
+        success: true,
+        target,
+        scope: data.scope,
+        key: data.key ?? null,
+        value: value === undefined ? null : foundry.utils.deepClone(value),
+      };
+    }
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyWorld');
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+    permissionManager.auditPermissionCheck('modifyWorld', permissionCheck, {
+      action: data.action,
+      uuid: doc.uuid,
+      scope: data.scope,
+      key: data.key,
+    });
+
+    const key = data.key as string;
+    if (data.action === 'unset') {
+      await doc.unsetFlag(data.scope, key);
+      return { success: true, target, scope: data.scope, key, removed: true };
+    }
+
+    if (data.replace) {
+      await doc.unsetFlag(data.scope, key);
+    }
+    await doc.setFlag(data.scope, key, data.value);
+    const value = doc.getFlag(data.scope, key);
+    return {
+      success: true,
+      target,
+      scope: data.scope,
+      key,
+      value: value === undefined ? null : foundry.utils.deepClone(value),
+    };
+  }
+
+  /**
+   * List, read or write a module's registered settings. Writes replace the value
+   * and need Allow Write Operations; the "core" namespace is refused.
+   */
+  async manageModuleSettings(data: {
+    action: 'list' | 'get' | 'set';
+    scope: string;
+    key?: string;
+    value?: unknown;
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    if (data.scope === 'core') {
+      return { success: false, error: 'The "core" settings namespace is not accessible' };
+    }
+
+    const registered: any[] = Array.from((game.settings as any).settings.values()).filter(
+      (s: any) => s.namespace === data.scope
+    );
+    if (registered.length === 0) {
+      return { success: false, error: `No settings registered for "${data.scope}"` };
+    }
+
+    if (data.action === 'list') {
+      // Values are included only when small (primitives); use "get" for objects.
+      return {
+        success: true,
+        scope: data.scope,
+        settings: registered.map((s: any) => {
+          let value: unknown;
+          try {
+            value = game.settings.get(data.scope as any, s.key);
+          } catch {
+            value = '(unreadable)';
+          }
+          const isObject = value !== null && typeof value === 'object';
+          return {
+            key: s.key,
+            scope: s.scope,
+            name: s.name ? game.i18n.localize(s.name) : null,
+            ...(isObject
+              ? { valueType: Array.isArray(value) ? 'array' : 'object' }
+              : { value: value ?? null }),
+          };
+        }),
+      };
+    }
+
+    const setting = registered.find((s: any) => s.key === data.key);
+    if (!setting) {
+      return { success: false, error: `Setting not found: ${data.scope}.${data.key}` };
+    }
+
+    if (data.action === 'get') {
+      const value = game.settings.get(data.scope as any, setting.key);
+      return {
+        success: true,
+        scope: data.scope,
+        key: setting.key,
+        settingScope: setting.scope,
+        value: value === undefined ? null : foundry.utils.deepClone(value),
+      };
+    }
+
+    const permissionCheck = permissionManager.checkWritePermission('modifyWorld');
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+    permissionManager.auditPermissionCheck('modifyWorld', permissionCheck, {
+      action: 'set',
+      scope: data.scope,
+      key: setting.key,
+    });
+
+    await game.settings.set(data.scope as any, setting.key, data.value as any);
+    const value = game.settings.get(data.scope as any, setting.key);
+    return {
+      success: true,
+      scope: data.scope,
+      key: setting.key,
+      settingScope: setting.scope,
+      value: value === undefined ? null : foundry.utils.deepClone(value),
+    };
+  }
+
+  /**
    * Create a PF2e shop: a Loot actor in Merchant mode, stocked with physical items
    * copied from the installed PF2e compendiums. Items can be named explicitly and/or
    * drawn at random from the compendium index by level, rarity, type and traits.

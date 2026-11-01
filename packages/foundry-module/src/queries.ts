@@ -102,6 +102,11 @@ export class QueryHandlers {
     // PF2e merchant shop creation
     CONFIG.queries[`${modulePrefix}.createPf2eShop`] = this.handleCreatePf2eShop.bind(this);
 
+    // Generic module data: document flags and module settings
+    CONFIG.queries[`${modulePrefix}.manageFlags`] = this.handleManageFlags.bind(this);
+    CONFIG.queries[`${modulePrefix}.manageModuleSettings`] =
+      this.handleManageModuleSettings.bind(this);
+
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
     CONFIG.queries[`${modulePrefix}.updateToken`] = this.handleUpdateToken.bind(this);
@@ -969,6 +974,56 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create PF2e shop: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Read or write another module's flags on a document. GM-only.
+   */
+  async handleManageFlags(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.scope) {
+        throw new Error('scope is required');
+      }
+
+      return await this.dataAccess.manageFlags(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to manage flags: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Read or write a module's registered settings. GM-only.
+   */
+  async handleManageModuleSettings(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.scope) {
+        throw new Error('scope is required');
+      }
+
+      return await this.dataAccess.manageModuleSettings(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to manage module settings: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

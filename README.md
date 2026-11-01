@@ -7,9 +7,11 @@
 
 ## Fork additions
 
-| Tool               | Description                                                                                                                                                                      |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pf2e-create-shop` | [PF2e only] Creates a Loot actor in Merchant mode, stocked from the installed compendiums with named items and/or a random draw filtered by level, rarity, item type and traits. |
+| Tool                     | Description                                                                                                                                                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pf2e-create-shop`       | [PF2e only] Creates a Loot actor in Merchant mode, stocked from the installed compendiums with named items and/or a random draw filtered by level, rarity, item type and traits.                                                                |
+| `manage-flags`           | Read, set or unset another module's flags on any document (actor, item, scene, journal, ...) by UUID, so Claude can inspect and configure modules that keep per-document data. Writes need Allow Write Operations; the `core` scope is refused. |
+| `manage-module-settings` | List, read or write a module's registered settings (for example world-wide presets). Writes need Allow Write Operations; the `core` namespace is refused.                                                                                       |
 
 To install this fork's Foundry module, use the manifest URL `https://github.com/LessThanInfinity/foundry-mcp-shaak/releases/latest/download/module.json`. It uses the same module ID as upstream (`foundry-mcp-bridge`), so it replaces the upstream module rather than running alongside it. Releases are cut by pushing a `shaak-v<version>` tag (for example `shaak-v0.8.5-shaak.1`).
 
