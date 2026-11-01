@@ -6847,6 +6847,134 @@ export class FoundryDataAccess {
   }
 
   /**
+   * Find or create a nested Actor folder path ("a/b/c"); returns the deepest folder id.
+   */
+  private async getOrCreateActorFolderPath(
+    path: string,
+    cache: Map<string, string | null>
+  ): Promise<string | null> {
+    const parts = path
+      .split('/')
+      .map(p => p.trim())
+      .filter(Boolean);
+    let parentId: string | null = null;
+    let key = '';
+    for (const name of parts) {
+      key = `${key}/${name}`;
+      if (cache.has(key)) {
+        parentId = cache.get(key) ?? null;
+        continue;
+      }
+      const parent: string | null = parentId;
+      let folder: any = game.folders?.find(
+        (f: any) => f.type === 'Actor' && f.name === name && (f.folder?.id ?? null) === parent
+      );
+      if (!folder) {
+        folder = await (Folder as any).create({ name, type: 'Actor', folder: parent });
+      }
+      parentId = folder.id;
+      cache.set(key, parentId);
+    }
+    return parentId;
+  }
+
+  /**
+   * Clone an actor into named copies, keeping items, effects and flags. The source
+   * is untouched. Needs Allow Write Operations.
+   */
+  async duplicateActor(data: {
+    source: string;
+    copies: Array<{
+      name: string;
+      folder?: string;
+      notes?: string;
+      img?: string;
+      system?: Record<string, unknown>;
+    }>;
+    folder?: string;
+    notesField?: 'private' | 'public' | 'biography';
+  }): Promise<any> {
+    this.validateFoundryState();
+
+    const permissionCheck = permissionManager.checkWritePermission('createActor', {
+      quantity: data.copies.length,
+    });
+    if (!permissionCheck.allowed) {
+      throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+    }
+    permissionManager.auditPermissionCheck('createActor', permissionCheck, {
+      source: data.source,
+      copies: data.copies.length,
+    });
+
+    const src: any = data.source.includes('.')
+      ? await fromUuid(data.source)
+      : this.findActorByIdentifier(data.source);
+    if (!src || src.documentName !== 'Actor') {
+      return { success: false, error: `Source actor not found: ${data.source}` };
+    }
+
+    const notesField = data.notesField ?? 'private';
+    const notesPath =
+      notesField === 'public'
+        ? 'system.details.publicNotes'
+        : notesField === 'biography'
+          ? 'system.details.biography.value'
+          : 'system.details.privateNotes';
+
+    const warnings: string[] = [];
+    const folderCache = new Map<string, string | null>();
+    const sourceData = src.toObject();
+    delete sourceData._id;
+    const sourceNotes = foundry.utils.getProperty(sourceData, notesPath);
+    if (data.copies.some(c => c.notes) && sourceNotes === undefined) {
+      warnings.push(`Source has no ${notesPath}; notes were set as new data (non-PF2e system?)`);
+    }
+
+    const docs: any[] = [];
+    const folderPaths: Array<string | null> = [];
+    for (const copy of data.copies) {
+      const doc = foundry.utils.deepClone(sourceData);
+      doc.name = copy.name;
+      doc.prototypeToken = doc.prototypeToken ?? {};
+      doc.prototypeToken.name = copy.name;
+      if (copy.img) doc.img = copy.img;
+
+      const folderPath = copy.folder ?? data.folder ?? null;
+      folderPaths.push(folderPath);
+      doc.folder = folderPath
+        ? await this.getOrCreateActorFolderPath(folderPath, folderCache)
+        : null;
+
+      if (copy.system) {
+        foundry.utils.mergeObject(doc.system, copy.system);
+      }
+      if (copy.notes) {
+        const existing = foundry.utils.getProperty(doc, notesPath);
+        foundry.utils.setProperty(
+          doc,
+          notesPath,
+          typeof existing === 'string' && existing ? `${existing}\n${copy.notes}` : copy.notes
+        );
+      }
+      docs.push(doc);
+    }
+
+    const created: any[] = await (Actor as any).createDocuments(docs);
+    return {
+      success: true,
+      source: { id: src.id, uuid: src.uuid, name: src.name },
+      created: created.map((a: any, i: number) => ({
+        id: a.id,
+        uuid: a.uuid,
+        name: a.name,
+        folder: folderPaths[i],
+      })),
+      warnings,
+    };
+  }
+
+  /**
    * Read or write module flags (flags.<scope>.<key>) on any document, addressed by
    * UUID or, for actors, by name/id. Writes need Allow Write Operations; the
    * "core" scope is refused.

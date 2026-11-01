@@ -103,6 +103,7 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.createPf2eShop`] = this.handleCreatePf2eShop.bind(this);
 
     // Generic module data: document flags and module settings
+    CONFIG.queries[`${modulePrefix}.duplicateActor`] = this.handleDuplicateActor.bind(this);
     CONFIG.queries[`${modulePrefix}.manageFlags`] = this.handleManageFlags.bind(this);
     CONFIG.queries[`${modulePrefix}.manageModuleSettings`] =
       this.handleManageModuleSettings.bind(this);
@@ -974,6 +975,31 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create PF2e shop: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Clone an actor into named copies. GM-only.
+   */
+  async handleDuplicateActor(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      if (!data.source || !Array.isArray(data.copies) || data.copies.length === 0) {
+        throw new Error('source and at least one copy are required');
+      }
+
+      return await this.dataAccess.duplicateActor(data);
+    } catch (error) {
+      throw new Error(
+        `Failed to duplicate actor: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
