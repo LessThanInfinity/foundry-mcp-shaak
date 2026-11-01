@@ -20,6 +20,8 @@ import * as fs from 'fs';
 
 import * as path from 'path';
 
+import { REBUILD_EXIT_CODE } from './rebuild-watch.js';
+
 const CONTROL_HOST = '127.0.0.1';
 
 const CONTROL_PORT = 31414;
@@ -39,7 +41,14 @@ class BackendClient {
 
   private backendProcess: ChildProcess | null = null;
 
-  private log(msg: string, meta?: any) {
+  private reconnectTimer: NodeJS.Timeout | null = null;
+
+  private closing = false;
+
+  /** Called after the wrapper reconnects on its own following a backend restart. */
+  onReconnected: (() => Promise<void>) | null = null;
+
+  log(msg: string, meta?: any) {
     try {
       const dir = path.dirname(this.logFile);
 
@@ -70,7 +79,10 @@ class BackendClient {
 
         sock.on('error', err => this.rejectAll(err));
 
-        sock.on('close', () => this.rejectAll(new Error('Backend disconnected')));
+        sock.on('close', () => {
+          this.rejectAll(new Error('Backend disconnected'));
+          this.scheduleReconnect();
+        });
 
         this.log('connect(): connected to backend');
 
@@ -82,6 +94,32 @@ class BackendClient {
         reject(e);
       });
     });
+  }
+
+  /**
+   * After the backend goes away (e.g. it exited because of a rebuild), reconnect
+   * without waiting for the next tool call, so a new build comes up and the session
+   * can be told about changed tools. The random delay spreads out wrappers from
+   * several sessions; the first one to find no backend spawns it, the rest connect.
+   */
+  private scheduleReconnect() {
+    if (this.closing || this.reconnectTimer) return;
+
+    const delayMs = 1000 + Math.floor(Math.random() * 3000);
+
+    this.log('scheduleReconnect(): backend disconnected, reconnecting', { delayMs });
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+
+      this.ensure()
+        .then(() => this.onReconnected?.())
+        .catch((e: unknown) =>
+          this.log('scheduleReconnect(): failed', {
+            error: e instanceof Error ? e.message : String(e),
+          })
+        );
+    }, delayMs);
   }
 
   private async connectWithRetry(): Promise<void> {
@@ -174,6 +212,8 @@ class BackendClient {
           this.log('startBackend(): backend exited cleanly (likely lock failure), exiting wrapper');
 
           process.exit(0); // Exit wrapper when backend fails to acquire lock
+        } else if (code === REBUILD_EXIT_CODE) {
+          this.log('startBackend(): backend exited after a rebuild; a new one will be started');
         } else if (code !== null) {
           this.log('startBackend(): backend exited unexpectedly', { exitCode: code });
         }
@@ -267,6 +307,10 @@ class BackendClient {
   cleanup() {
     this.log('cleanup(): shutting down backend');
 
+    this.closing = true;
+
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+
     if (this.backendProcess && !this.backendProcess.killed) {
       try {
         // Kill backend process - works cross-platform
@@ -305,8 +349,32 @@ async function startWrapper() {
 
   const mcp = new Server(
     { name: config.server.name, version: config.server.version },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: { listChanged: true } } }
   );
+
+  // Fingerprint of the tool list last given to the client, so a backend that comes
+  // back with different tools (after a rebuild) can trigger a list_changed notice.
+  let lastToolsSignature: string | null = null;
+
+  const toolsSignature = (tools: any[]): string =>
+    JSON.stringify([...tools].sort((a, b) => String(a.name).localeCompare(String(b.name))));
+
+  backend.onReconnected = async () => {
+    if (lastToolsSignature === null) return;
+    try {
+      const res = await backend.send('list_tools', {});
+      const signature = toolsSignature(res.tools || []);
+      if (signature !== lastToolsSignature) {
+        lastToolsSignature = signature;
+        backend.log('onReconnected(): tool list changed, notifying client', {
+          toolCount: res.tools?.length || 0,
+        });
+        await mcp.sendToolListChanged();
+      }
+    } catch (e) {
+      backend.log('onReconnected(): tool list check failed', { error: (e as any)?.message });
+    }
+  };
 
   // Setup cleanup handlers - cross-platform approach
 
@@ -342,6 +410,8 @@ async function startWrapper() {
           toolCount: res.tools?.length || 0,
         });
       } catch {}
+
+      lastToolsSignature = toolsSignature(res.tools || []);
 
       return { tools: res.tools || [] };
     } catch (e) {

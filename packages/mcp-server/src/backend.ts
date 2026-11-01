@@ -9,6 +9,7 @@ import * as net from 'net';
 import { spawn, ChildProcess } from 'child_process';
 
 import { evaluateLockFile } from './lock.js';
+import { REBUILD_EXIT_CODE, watchForRebuild } from './rebuild-watch.js';
 
 import { config } from './config.js';
 
@@ -1880,6 +1881,18 @@ async function startBackend(): Promise<void> {
   });
 
   void autoStartComfyUI();
+
+  // Exit when our own build changes on disk, so the next wrapper request starts the
+  // new build instead of this process serving stale code and tools indefinitely.
+  const backendFile = process.argv[1];
+  if (backendFile) {
+    watchForRebuild(backendFile, () => {
+      logger.info('Backend build changed on disk; exiting so the next request starts it');
+      foundryClient.disconnect();
+      releaseLock();
+      process.exit(REBUILD_EXIT_CODE);
+    });
+  }
 
   // Shutdown hooks
 
