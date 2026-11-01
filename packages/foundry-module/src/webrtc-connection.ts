@@ -29,6 +29,10 @@ export class WebRTCConnection {
   private dataChannel: RTCDataChannel | null = null;
   private connectionState: string = CONNECTION_STATES.DISCONNECTED;
   private messageHandler: ((message: any) => Promise<void>) | null = null;
+  private disconnectHandler: (() => void) | null = null;
+  private wasConnected = false;
+  private closedByUs = false;
+  private dropReported = false;
 
   constructor(private config: WebRTCConfig) {}
 
@@ -88,11 +92,13 @@ export class WebRTCConnection {
     this.dataChannel.onopen = () => {
       this.log('WebRTC data channel opened');
       this.connectionState = CONNECTION_STATES.CONNECTED;
+      this.wasConnected = true;
     };
 
     this.dataChannel.onclose = () => {
       this.log('WebRTC data channel closed');
       this.connectionState = CONNECTION_STATES.DISCONNECTED;
+      this.reportDrop('data channel closed');
     };
 
     this.dataChannel.onerror = error => {
@@ -120,6 +126,7 @@ export class WebRTCConnection {
 
       if (state === 'failed' || state === 'disconnected' || state === 'closed') {
         this.connectionState = CONNECTION_STATES.DISCONNECTED;
+        this.reportDrop(`ICE ${state}`);
       }
     };
 
@@ -192,7 +199,24 @@ export class WebRTCConnection {
     }
   }
 
+  /**
+   * Register a callback for when an established connection drops on its own (e.g.
+   * the MCP server restarted). Not called for disconnect() or failed connects.
+   */
+  setDisconnectHandler(handler: () => void): void {
+    this.disconnectHandler = handler;
+  }
+
+  private reportDrop(reason: string): void {
+    if (!this.wasConnected || this.closedByUs || this.dropReported) return;
+    this.dropReported = true;
+    this.log(`WebRTC connection lost (${reason})`);
+    this.disconnectHandler?.();
+  }
+
   disconnect(): void {
+    this.closedByUs = true;
+
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;

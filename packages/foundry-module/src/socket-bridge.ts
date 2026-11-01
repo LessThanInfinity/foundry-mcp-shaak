@@ -80,6 +80,7 @@ export class SocketBridge {
     };
 
     this.webrtc = new WebRTCConnection(webrtcConfig);
+    this.webrtc.setDisconnectHandler(() => this.handleConnectionLost());
 
     try {
       await this.webrtc.connect(this.handleMessage.bind(this));
@@ -377,10 +378,7 @@ export class SocketBridge {
             `[foundry-mcp-bridge] Scene background did not persist on create (got "${scene.background?.src}"), repairing via update()...`
           );
           await scene.update({ background: { src: expectedBackgroundSrc } });
-          console.log(
-            `[foundry-mcp-bridge] Scene background after repair:`,
-            scene.background?.src
-          );
+          console.log(`[foundry-mcp-bridge] Scene background after repair:`, scene.background?.src);
         }
       }
 
@@ -502,10 +500,25 @@ export class SocketBridge {
     }
   }
 
+  /**
+   * An established WebRTC connection dropped on its own (e.g. the MCP server
+   * restarted after a rebuild): tear it down and start reconnecting.
+   */
+  private handleConnectionLost(): void {
+    this.log('Connection to MCP server lost, reconnecting');
+    this.webrtc?.disconnect();
+    this.webrtc = null;
+    this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.scheduleReconnect();
+  }
+
   private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.log(`Max reconnection attempts reached (${this.maxReconnectAttempts})`);
-      return;
+    // After the fast attempts, keep trying at the 30s cap instead of giving up, so
+    // the bridge comes back on its own whenever the MCP server is running again.
+    if (this.reconnectAttempts === this.maxReconnectAttempts) {
+      this.log(
+        `No connection after ${this.maxReconnectAttempts} attempts; retrying every 30s until the MCP server is back`
+      );
     }
 
     if (this.reconnectTimer) {
