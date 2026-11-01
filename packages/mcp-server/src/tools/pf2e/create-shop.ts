@@ -7,6 +7,10 @@ export interface PF2eCreateShopToolsOptions {
   logger: Logger;
 }
 
+// A random draw indexes every Item compendium, which on a remote host (e.g. Molten)
+// can take well over the default 10s query timeout.
+const CREATE_SHOP_TIMEOUT_MS = 90000;
+
 const RARITIES = ['common', 'uncommon', 'rare', 'unique'] as const;
 const PHYSICAL_TYPES = [
   'weapon',
@@ -161,7 +165,11 @@ export class PF2eCreateShopTools {
       random: parsed.data.random?.count ?? 0,
     });
     try {
-      return await this.foundryClient.query('foundry-mcp-bridge.createPf2eShop', parsed.data);
+      return await this.foundryClient.query(
+        'foundry-mcp-bridge.createPf2eShop',
+        parsed.data,
+        CREATE_SHOP_TIMEOUT_MS
+      );
     } catch (error) {
       this.logger.error('Failed to create PF2e shop', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
