@@ -1493,6 +1493,12 @@ async function startBackend(): Promise<void> {
   const server = net.createServer(socket => {
     socket.setEncoding('utf8');
 
+    // A client (wrapper) that disconnects abruptly emits ECONNRESET here; without a
+    // handler that error is uncaught and takes down the backend for every session.
+    socket.on('error', err => {
+      logger.warn('Control client socket error', { error: err.message });
+    });
+
     let buffer = '';
 
     socket.on('data', async (chunk: string) => {
