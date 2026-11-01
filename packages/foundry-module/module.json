@@ -1,7 +1,7 @@
 {
   "id": "foundry-mcp-bridge",
-  "title": "Foundry MCP Bridge",
-  "description": "Connect Foundry VTT to Claude through MCP protocol. Enable AI-powered actor creation, intelligent compendium search, campaign analysis, and interactive dice roll coordination with comprehensive GM-only security.",
+  "title": "Foundry MCP Bridge (shaak fork)",
+  "description": "Personal fork of Adam Dooley's Foundry MCP Bridge (github.com/adambdooley/foundry-vtt-mcp) with extra PF2e tools. Connect Foundry VTT to Claude through MCP protocol. Enable AI-powered actor creation, intelligent compendium search, campaign analysis, and interactive dice roll coordination with comprehensive GM-only security.",
   "version": "0.8.5",
   "compatibility": {
     "minimum": "13",
@@ -13,13 +13,17 @@
       "name": "Adam Dooley",
       "email": "adambriandooley@gmail.com",
       "url": "https://github.com/adambdooley"
+    },
+    {
+      "name": "LessThanInfinity (fork)",
+      "url": "https://github.com/LessThanInfinity"
     }
   ],
-  "url": "https://github.com/adambdooley/foundry-vtt-mcp",
-  "bugs": "https://github.com/adambdooley/foundry-vtt-mcp/issues",
-  "changelog": "https://github.com/adambdooley/foundry-vtt-mcp/releases",
-  "readme": "https://github.com/adambdooley/foundry-vtt-mcp/blob/master/README.md",
-  "license": "https://github.com/adambdooley/foundry-vtt-mcp/blob/master/LICENSE",
+  "url": "https://github.com/LessThanInfinity/foundry-mcp-shaak",
+  "bugs": "https://github.com/LessThanInfinity/foundry-mcp-shaak/issues",
+  "changelog": "https://github.com/LessThanInfinity/foundry-mcp-shaak/releases",
+  "readme": "https://github.com/LessThanInfinity/foundry-mcp-shaak/blob/master/README.md",
+  "license": "https://github.com/LessThanInfinity/foundry-mcp-shaak/blob/master/LICENSE",
   "esmodules": ["dist/main.js"],
   "styles": ["styles/module.css", "styles/enhanced-creature-index.css"],
   "languages": [
@@ -30,8 +34,8 @@
     }
   ],
   "socket": true,
-  "manifest": "https://github.com/adambdooley/foundry-vtt-mcp/releases/latest/download/module.json",
-  "download": "https://github.com/adambdooley/foundry-vtt-mcp/releases/latest/download/foundry-vtt-mcp.zip",
+  "manifest": "https://github.com/LessThanInfinity/foundry-mcp-shaak/releases/latest/download/module.json",
+  "download": "https://github.com/LessThanInfinity/foundry-mcp-shaak/releases/latest/download/foundry-mcp-shaak.zip",
   "protected": false,
   "coreTranslation": false,
   "library": false,
