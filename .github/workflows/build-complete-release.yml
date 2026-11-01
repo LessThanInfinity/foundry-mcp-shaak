@@ -23,6 +23,8 @@ on:
 
 jobs:
   build-nsis:
+    # Fork: upstream's installer build and Foundry package-registry publish only run upstream.
+    if: github.repository == 'adambdooley/foundry-vtt-mcp'
     runs-on: windows-latest
     
     steps:
@@ -245,6 +247,7 @@ jobs:
         retention-days: 30
 
   build-mac-pkg:
+    if: github.repository == 'adambdooley/foundry-vtt-mcp'
     runs-on: macos-latest
 
     steps:

@@ -1,8 +1,14 @@
-name: Build & Release Foundry Module
+name: Build & Release Foundry Module (fork)
+# Fork release: push a tag like "shaak-v0.8.5-shaak.1". The version after
+# "shaak-v" is stamped into the released module.json, so the source manifests
+# can keep upstream's version (and pass its version-consistency check).
 on:
   workflow_dispatch:
   push:
-    tags: [ "foundry-module-v*" ]
+    tags: ['shaak-v*']
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -11,14 +17,39 @@ jobs:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
 
-      - name: Create module zip
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20.12.2'
+          cache: npm
+
+      - name: Install and build
         run: |
+          npm ci
+          npm run build:shared
+          npm run build:foundry
+
+      - name: Stage module and stamp version
+        run: |
+          VERSION="${GITHUB_REF_NAME#shaak-v}"
+          mkdir -p release/foundry-mcp-bridge
           cd packages/foundry-module
-          zip -r ../../foundry-vtt-mcp.zip . -x ".*" -x "node_modules/*"
+          cp -r module.json dist lang styles templates scripts ../../release/foundry-mcp-bridge/
+          cd ../../release
+          node -e '
+            const fs = require("fs");
+            const p = "foundry-mcp-bridge/module.json";
+            const m = JSON.parse(fs.readFileSync(p, "utf8"));
+            m.version = process.argv[1];
+            fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
+          ' "$VERSION"
+          cp foundry-mcp-bridge/module.json module.json
+          cd foundry-mcp-bridge && zip -r ../foundry-mcp-shaak.zip .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: foundry-vtt-mcp.zip
+          files: |
+            release/module.json
+            release/foundry-mcp-shaak.zip
           generate_release_notes: true

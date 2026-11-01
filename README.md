@@ -1,5 +1,20 @@
 # Foundry VTT MCP Bridge
 
+> **This is a personal fork of [adambdooley/foundry-vtt-mcp](https://github.com/adambdooley/foundry-vtt-mcp) by Adam Dooley.**
+> Almost everything here is his work: the MCP server, the Foundry module, and nearly all of the tools. This fork only adds a few extra tools on top, mostly for Pathfinder 2e prep (see [Fork additions](#fork-additions)). For the original project, its releases, and support, go to the [upstream repository](https://github.com/adambdooley/foundry-vtt-mcp).
+>
+> This fork tracks upstream and is not affiliated with or endorsed by the original author. Please report issues with the fork's own tools here, not upstream.
+
+## Fork additions
+
+| Tool               | Description                                                                                                                                                                      |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pf2e-create-shop` | [PF2e only] Creates a Loot actor in Merchant mode, stocked from the installed compendiums with named items and/or a random draw filtered by level, rarity, item type and traits. |
+
+To install this fork's Foundry module, use the manifest URL `https://github.com/LessThanInfinity/foundry-mcp-shaak/releases/latest/download/module.json`. It uses the same module ID as upstream (`foundry-mcp-bridge`), so it replaces the upstream module rather than running alongside it. Releases are cut by pushing a `shaak-v<version>` tag (for example `shaak-v0.8.5-shaak.1`).
+
+The rest of this README is upstream's documentation.
+
 Connect Foundry VTT to Claude Desktop for AI-powered campaign management through the Model Context Protocol (MCP). It currently supports Dungeons and Dragons Fifth Edition, Pathfinder Second Edition, Das Schwarze Augen Fifth Edition, Cosmere RPG System, Warhammer Fantasy Roleplay 4th Edition, & Mongoose Traveller 2nd Edition. The majority of MCP tools are system agnostic or have features that are aware of the system it is working with, excluding some DSA 5 specific tools.
 
 ## Overview
