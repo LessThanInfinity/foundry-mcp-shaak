@@ -2334,10 +2334,12 @@ export class QueryHandlers {
 
   private async handleUpdateActors(data: {
     updates: Array<{
-      id: string;
+      id?: string;
+      folder?: string;
       name?: string;
       img?: string;
       system?: Record<string, any>;
+      prototypeToken?: Record<string, any>;
     }>;
   }): Promise<any> {
     const gmCheck = this.validateGMAccess();

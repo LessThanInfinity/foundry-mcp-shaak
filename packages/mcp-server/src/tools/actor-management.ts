@@ -120,13 +120,27 @@ export class ActorManagementTools {
               minItems: 1,
               description:
                 'Required for "update". One or more actor patches. ' +
-                'Each entry must include "id" plus at least one field to change.',
+                'Each entry must include "id" (or "folder") plus at least one field to change.',
               items: {
                 type: 'object',
                 properties: {
                   id: {
                     type: 'string',
                     description: 'ID of the actor to update.',
+                  },
+                  folder: {
+                    type: 'string',
+                    description:
+                      'Instead of "id": an Actor folder name or ID. The patch is applied to every ' +
+                      'actor in that folder and all of its sub-folders.',
+                  },
+                  prototypeToken: {
+                    type: 'object',
+                    description:
+                      'Prototype token fields to update, e.g. {"displayName": 50} for ' +
+                      '"Always for everyone" (0 none, 10 control, 20 owner hover, 30 hover, ' +
+                      '40 owner, 50 always). Only affects tokens placed afterwards.',
+                    additionalProperties: true,
                   },
                   name: {
                     type: 'string',
@@ -325,12 +339,18 @@ export class ActorManagementTools {
     const schema = z.object({
       updates: z
         .array(
-          z.object({
-            id: z.string().min(1),
-            name: z.string().optional(),
-            img: z.string().optional(),
-            system: z.record(z.any()).optional(),
-          })
+          z
+            .object({
+              id: z.string().min(1).optional(),
+              folder: z.string().min(1).optional(),
+              name: z.string().optional(),
+              img: z.string().optional(),
+              system: z.record(z.any()).optional(),
+              prototypeToken: z.record(z.any()).optional(),
+            })
+            .refine(u => Boolean(u.id) !== Boolean(u.folder), {
+              message: 'Each update needs exactly one of "id" or "folder"',
+            })
         )
         .min(1),
     });
