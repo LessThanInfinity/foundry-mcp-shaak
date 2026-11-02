@@ -11702,17 +11702,48 @@ export class FoundryDataAccess {
    * Merges supplied fields into the actor (top-level keys overwrite).
    */
   async updateActors(
-    updates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
+    updates: Array<{
+      id?: string;
+      folder?: string;
+      name?: string;
+      img?: string;
+      system?: Record<string, any>;
+      prototypeToken?: Record<string, any>;
+    }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
     const updatedActors: Array<{ id: string; name: string }> = [];
 
+    // An entry with "folder" instead of "id" fans out to every actor in that folder
+    // and all of its sub-folders.
+    const expanded: Array<(typeof updates)[number] & { id: string }> = [];
     for (const u of updates) {
+      if (u.id) {
+        expanded.push({ ...u, id: u.id });
+        continue;
+      }
+      if (!u.folder) throw new Error('Each update needs an "id" or a "folder"');
+      const root = game.folders?.find(
+        (f: any) => f.type === 'Actor' && (f.id === u.folder || f.name === u.folder)
+      ) as any;
+      if (!root) throw new Error(`Actor folder not found: ${u.folder}`);
+      const folderIds = new Set<string>([
+        root.id,
+        ...root.getSubfolders(true).map((f: any) => f.id as string),
+      ]);
+      const members = game.actors.filter((a: any) => a.folder && folderIds.has(a.folder.id));
+      for (const actor of members as any[]) {
+        expanded.push({ ...u, id: actor.id });
+      }
+    }
+
+    for (const u of expanded) {
       const actor = game.actors.get(u.id) as any;
       if (!actor) throw new Error(`Actor not found: ${u.id}`);
 
       const patch: Record<string, any> = {};
       if (u.name !== undefined) patch.name = u.name;
       if (u.img !== undefined) patch.img = u.img;
+      if (u.prototypeToken !== undefined) patch.prototypeToken = u.prototypeToken;
       if (u.system !== undefined) {
         // Build a single patch.system nested object so Foundry deep-merges everything
         // in one pass without flat-key vs nested-key conflicts.
