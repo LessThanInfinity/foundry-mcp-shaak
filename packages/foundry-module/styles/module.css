@@ -430,3 +430,29 @@
 [data-service-type].hidden {
   display: none;
 }
+
+/* ---- Connection Status panel ---- */
+.mcp-status { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+.mcp-status h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.75; border: 0; }
+.mcp-status-banner { padding: 10px 12px; border-radius: 6px; border: 1px solid transparent; }
+.mcp-status-headline { font-size: 16px; font-weight: 700; }
+.mcp-status-detail { margin-top: 2px; font-size: 13px; line-height: 1.35; }
+.mcp-status-ok { background: rgba(0, 150, 60, 0.14); border-color: rgba(0, 150, 60, 0.45); }
+.mcp-status-standby { background: rgba(220, 150, 0, 0.16); border-color: rgba(220, 150, 0, 0.5); }
+.mcp-status-warn { background: rgba(200, 40, 40, 0.14); border-color: rgba(200, 40, 40, 0.45); }
+.mcp-status-off { background: rgba(128, 128, 128, 0.16); border-color: rgba(128, 128, 128, 0.45); }
+.mcp-status-block { padding: 2px 2px 0; }
+.mcp-status-facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
+.mcp-status-facts dt { opacity: 0.7; }
+.mcp-status-facts dd { margin: 0; }
+.mcp-status-muted { opacity: 0.65; font-size: 12px; }
+.mcp-status-yes { color: #2e9d57; margin-left: 6px; }
+.mcp-status-no { color: #c0392b; margin-left: 6px; font-weight: 600; }
+.mcp-status-worlds { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mcp-status-worlds th { text-align: left; font-weight: 600; opacity: 0.7; padding: 2px 6px; }
+.mcp-status-worlds td { padding: 4px 6px; border-top: 1px solid rgba(128, 128, 128, 0.3); vertical-align: top; }
+.mcp-status-row-active td { background: rgba(0, 150, 60, 0.1); }
+.mcp-status-tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.5); margin-left: 4px; }
+.mcp-status-tag-active { background: #2e9d57; border-color: #2e9d57; color: #fff; font-weight: 700; margin-left: 0; }
+.mcp-status-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.mcp-status-actions button { flex: 1 1 auto; width: auto; }

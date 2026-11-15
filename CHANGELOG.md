@@ -1,3 +1,15 @@
+## Unreleased
+
+### New Features
+
+- **More than one Foundry world can be connected at once** — for example a hosted world and a local copy. Previously the server had one bridge slot and a newer WebRTC connection silently replaced an older one, leaving the replaced world still reporting "connected". Now every world stays connected, one is **active** (the first to connect, until you switch), and the others are on standby. New tools `list-foundry-worlds` and `select-foundry-world` show and change the active world. A world on an older module is named by asking it directly. If the active world's module does not have a requested tool, the error now says which world and module version, and which other worlds are connected. The world you choose is **remembered**: each world tells the server the address it is open at (for example `localhost:30000` versus a hosted address), so a page reload, a dropped connection or a server restart puts your chosen world back in charge when it reconnects, instead of whichever world reconnected first. The choice is saved in `~/.foundry-mcp/preferred-world.json` (or `$FOUNDRY_MCP_STATE_DIR`).
+
+- **Connection Status panel in Foundry** — Game Settings → Foundry MCP Bridge → Open Connection Status (or `foundryMCPBridge.openStatus()` from a macro). Shows whether this world is connected, whether it is ACTIVE or on standby, this world's title/system/module version, the server address and version, every connected world, and whether the cut-in tool is registered. Buttons: Make this world active, Connect, Disconnect, Refresh, Copy details.
+
+- **`apply-cut-in-template`** — bulk-add a Cinematic Cut-ins crit animation to many actors in one call. Each actor gets an active configuration (their own portrait, `{{name}}` main text, hidden sub text, 2.5 s, the Persona-5 crit SFX) and an `onCrit` trigger that plays it on a PF2e critical-success attack. The theme colour is picked from each portrait: `colorStyle` is `prominent` (the biggest colour, pushed bright so it pops; default), `natural` (calmer) or `highlight` (the brightest accent in the portrait). Colours can be corrected per actor with `colorOverrides`. Targets all characters and NPCs, or a folder (including subfolders). Dry run by default; actors that already have cut-in data are skipped unless `onExisting` is `overwrite`. Results are compact by default (`detail: "full"` adds each actor's portrait and what every style would pick). Requires Cinematic Cut-ins 3.x.
+
+- **Apply-cut-in macro** — `packages/foundry-module/macros/apply-cut-in.js` gives one actor the same crit animation from inside Foundry, with `ACTOR`, `STYLE`, `COLOR` and other settings as constants at the top. The module now exposes `game.modules.get('foundry-mcp-bridge').api` (`applyCutIn`, `openStatus`) for macros.
+
 ## v0.8.6 (2026-11-04)
 
 ### New Features

@@ -1,5 +1,6 @@
 import { MODULE_ID, CONNECTION_STATES } from './constants.js';
 import { WebRTCConnection, type WebRTCConfig } from './webrtc-connection.js';
+import { collectHello, STATUS_CHANGED_HOOK, type BridgeStatus } from './bridge-status.js';
 
 export interface BridgeConfig {
   enabled: boolean;
@@ -24,6 +25,8 @@ export class SocketBridge {
   private maxReconnectAttempts = 5;
   private reconnectTimer: any = null;
   private activeConnectionType: 'websocket' | 'webrtc' | null = null;
+  /** What the MCP server last told this world: whether it is active and who else is connected. */
+  private bridgeStatus: BridgeStatus | null = null;
 
   constructor(private config: BridgeConfig) {
     this.maxReconnectAttempts = config.reconnectAttempts;
@@ -87,6 +90,8 @@ export class SocketBridge {
       this.connectionState = CONNECTION_STATES.CONNECTED;
       this.reconnectAttempts = 0;
       this.log('Connected via WebRTC');
+      this.sendHello();
+      this.notifyStatusChanged();
     } catch (error) {
       this.log(`WebRTC connection failed: ${error}`);
       this.connectionState = CONNECTION_STATES.DISCONNECTED;
@@ -134,6 +139,8 @@ export class SocketBridge {
           this.reconnectAttempts = 0;
           this.log('Connected to MCP server via WebSocket');
           this.setupEventHandlers();
+          this.sendHello();
+          this.notifyStatusChanged();
           resolve();
         };
 
@@ -153,6 +160,8 @@ export class SocketBridge {
         this.ws.onclose = event => {
           this.log(`Disconnected: ${event.reason || 'Connection closed'}`);
           this.connectionState = CONNECTION_STATES.DISCONNECTED;
+          this.bridgeStatus = null;
+          this.notifyStatusChanged();
 
           if (event.wasClean) {
             // Clean disconnect, don't reconnect
@@ -188,7 +197,9 @@ export class SocketBridge {
 
     this.activeConnectionType = null;
     this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.bridgeStatus = null;
     this.log('Disconnected from MCP server');
+    this.notifyStatusChanged();
   }
 
   private setupEventHandlers(): void {
@@ -224,6 +235,9 @@ export class SocketBridge {
         await this.handleJobCompleted(message.data);
       } else if (message.type === 'map-generation-progress') {
         this.handleProgressUpdate(message.data);
+      } else if (message.type === 'bridge-status') {
+        this.bridgeStatus = message.data ?? null;
+        this.notifyStatusChanged();
       }
     } catch (error) {
       console.error(`[foundry-mcp-bridge] ERROR in handleMessage:`, error);
@@ -509,6 +523,7 @@ export class SocketBridge {
     this.webrtc?.disconnect();
     this.webrtc = null;
     this.connectionState = CONNECTION_STATES.DISCONNECTED;
+    this.bridgeStatus = null;
     this.scheduleReconnect();
   }
 
@@ -530,6 +545,7 @@ export class SocketBridge {
 
     this.log(`Scheduling reconnection attempt ${this.reconnectAttempts} in ${delay}ms`);
     this.connectionState = CONNECTION_STATES.RECONNECTING;
+    this.notifyStatusChanged();
 
     this.reconnectTimer = setTimeout(async () => {
       try {
@@ -567,6 +583,34 @@ export class SocketBridge {
       data: data,
       timestamp: Date.now(),
     });
+  }
+
+  /** Tells the server which world this is, and which queries this world's module can answer. */
+  private sendHello(): void {
+    try {
+      this.sendMessage({ type: 'hello', data: collectHello() });
+    } catch (error) {
+      this.log(`Could not send hello: ${error}`);
+    }
+  }
+
+  /** Lets open panels know the connection or status changed. */
+  private notifyStatusChanged(): void {
+    try {
+      (globalThis as any).Hooks?.callAll?.(STATUS_CHANGED_HOOK);
+    } catch {
+      // never let a panel problem affect the connection
+    }
+  }
+
+  /** What the server last reported about the connected worlds, or null if it never has. */
+  getBridgeStatus(): BridgeStatus | null {
+    return this.bridgeStatus;
+  }
+
+  /** Asks the server to make this world the one Claude talks to. */
+  requestSelectWorld(): void {
+    this.sendMessage({ type: 'select-world' });
   }
 
   isConnected(): boolean {

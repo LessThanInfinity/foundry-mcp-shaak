@@ -40,6 +40,8 @@ import { WFRP4eAddItemsTools } from './tools/wfrp4e/add-items.js';
 import { PF2eCreateShopTools } from './tools/pf2e/create-shop.js';
 import { ModuleDataTools } from './tools/module-data.js';
 import { DuplicateActorTools } from './tools/duplicate-actor.js';
+import { CutInTools } from './tools/cut-ins.js';
+import { WorldSelectionTools } from './tools/world-selection.js';
 
 import { MapGenerationTools } from './tools/map-generation.js';
 
@@ -1339,7 +1341,7 @@ async function startBackend(): Promise<void> {
 
   // Initialize Foundry client and tools
 
-  const foundryClient = new FoundryClient(config.foundry, logger);
+  const foundryClient = new FoundryClient(config.foundry, logger, config.server.version);
 
   // Initialize system registry and register adapters
   const { getSystemRegistry } = await import('./systems/index.js');
@@ -1402,6 +1404,8 @@ async function startBackend(): Promise<void> {
 
   const moduleDataTools = new ModuleDataTools({ foundryClient, logger });
   const duplicateActorTools = new DuplicateActorTools({ foundryClient, logger });
+  const cutInTools = new CutInTools({ foundryClient, logger });
+  const worldSelectionTools = new WorldSelectionTools({ foundryClient, logger });
 
   // Initialize mapgen-style backend components for map generation
   let mapGenerationJobQueue: any = null;
@@ -1634,6 +1638,8 @@ async function startBackend(): Promise<void> {
     ...pf2eCreateShopTools.getToolDefinitions(),
 
     ...moduleDataTools.getToolDefinitions(),
+    ...cutInTools.getToolDefinitions(),
+    ...worldSelectionTools.getToolDefinitions(),
     ...duplicateActorTools.getToolDefinitions(),
 
     ...tokenManipulationTools.getToolDefinitions(),
@@ -1860,6 +1866,21 @@ async function startBackend(): Promise<void> {
 
       case 'manage-module-settings':
         result = await moduleDataTools.handleManageModuleSettings(args);
+
+        break;
+
+      case 'apply-cut-in-template':
+        result = await cutInTools.handleApplyCutInTemplate(args);
+
+        break;
+
+      case 'list-foundry-worlds':
+        result = await worldSelectionTools.handleListWorlds(args);
+
+        break;
+
+      case 'select-foundry-world':
+        result = await worldSelectionTools.handleSelectWorld(args);
 
         break;
 

@@ -7,6 +7,10 @@ export interface WebRTCPeerOptions {
   config: Config['foundry']['webrtc'];
   logger: Logger;
   onMessage: (message: any) => Promise<void>;
+  /** Called once when the data channel opens, i.e. the world is really connected. */
+  onOpen?: () => void;
+  /** Called once when an opened connection ends for good (channel closed, failed or closed). */
+  onClose?: () => void;
 }
 
 /**
@@ -19,6 +23,10 @@ export class WebRTCPeer {
   private logger: Logger;
   private config: Config['foundry']['webrtc'];
   private onMessageHandler: (message: any) => Promise<void>;
+  private onOpenHandler: (() => void) | undefined;
+  private onCloseHandler: (() => void) | undefined;
+  private opened = false;
+  private closeNotified = false;
   private isConnected = false;
   private pendingChunks: Map<
     string,
@@ -32,10 +40,12 @@ export class WebRTCPeer {
   > = new Map();
   private chunkCleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor({ config, logger, onMessage }: WebRTCPeerOptions) {
+  constructor({ config, logger, onMessage, onOpen, onClose }: WebRTCPeerOptions) {
     this.config = config;
     this.logger = logger.child({ component: 'WebRTCPeer' });
     this.onMessageHandler = onMessage;
+    this.onOpenHandler = onOpen;
+    this.onCloseHandler = onClose;
 
     // Start cleanup interval for timed-out chunks
     this.startChunkCleanup();
@@ -98,9 +108,11 @@ export class WebRTCPeer {
 
       if (state === 'failed') {
         this.logger.error('[WebRTC] ICE connection failed - check STUN/TURN config or firewall');
-        this.isConnected = false;
-      } else if (state === 'disconnected' || state === 'closed') {
-        this.isConnected = false;
+        this.markClosed();
+      } else if (state === 'closed') {
+        this.markClosed();
+      } else if (state === 'disconnected') {
+        this.isConnected = false; // may recover; only failed/closed end the connection
       } else if (state === 'connected') {
         this.logger.info('[WebRTC] ICE connection established');
       }
@@ -116,8 +128,10 @@ export class WebRTCPeer {
         this.isConnected = true;
       } else if (state === 'failed') {
         this.logger.error('[WebRTC] Peer connection failed - DTLS handshake may have failed');
-        this.isConnected = false;
-      } else if (state === 'disconnected' || state === 'closed') {
+        this.markClosed();
+      } else if (state === 'closed') {
+        this.markClosed();
+      } else if (state === 'disconnected') {
         this.isConnected = false;
       }
     };
@@ -136,11 +150,15 @@ export class WebRTCPeer {
     this.dataChannel.onopen = () => {
       this.logger.info('[WebRTC] ✓ Data channel opened - connection fully ready!');
       this.isConnected = true;
+      if (!this.opened) {
+        this.opened = true;
+        this.onOpenHandler?.();
+      }
     };
 
     this.dataChannel.onclose = () => {
       this.logger.info('[WebRTC] Data channel closed');
-      this.isConnected = false;
+      this.markClosed();
     };
 
     this.dataChannel.onerror = (error: any) => {
@@ -398,7 +416,19 @@ export class WebRTCPeer {
     }, WEBRTC_CONSTANTS.CHUNK_CLEANUP_INTERVAL_MS);
   }
 
+  /** The connection is over: stop sending, and tell the owner once if it had opened. */
+  private markClosed(): void {
+    this.isConnected = false;
+    if (this.opened && !this.closeNotified) {
+      this.closeNotified = true;
+      this.onCloseHandler?.();
+    }
+  }
+
   disconnect(): void {
+    // The owner is closing this peer itself, so it does not need an onClose callback.
+    this.closeNotified = true;
+
     // Stop chunk cleanup interval
     if (this.chunkCleanupInterval) {
       clearInterval(this.chunkCleanupInterval);

@@ -1,6 +1,7 @@
 import { MODULE_ID, ERROR_MESSAGES, TOKEN_DISPOSITIONS } from './constants.js';
 import { permissionManager } from './permissions.js';
 import { transactionManager } from './transaction-manager.js';
+import { applyCutInTemplate, type ApplyCutInTemplateInput } from './cut-ins.js';
 
 // The same five characters foundry.utils.escapeHTML replaces in v14, kept local because
 // that helper isn't confirmed in v13, this module's minimum.
@@ -7006,6 +7007,29 @@ export class FoundryDataAccess {
       })),
       warnings,
     };
+  }
+
+  /**
+   * Bulk-apply a Cinematic Cut-ins crit animation to many actors. A dry run (the default)
+   * only reports; real writes need Allow Write Operations.
+   */
+  async applyCutInTemplate(data: ApplyCutInTemplateInput): Promise<any> {
+    this.validateFoundryState();
+
+    if (data.dryRun === false) {
+      const permissionCheck = permissionManager.checkWritePermission('modifyWorld');
+      if (!permissionCheck.allowed) {
+        throw new Error(`${ERROR_MESSAGES.ACCESS_DENIED}: ${permissionCheck.reason}`);
+      }
+      permissionManager.auditPermissionCheck('modifyWorld', permissionCheck, {
+        action: 'apply-cut-in-template',
+        folder: data.folder,
+        types: data.types,
+        onExisting: data.onExisting,
+      });
+    }
+
+    return await applyCutInTemplate(data);
   }
 
   /**

@@ -110,6 +110,7 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.manageFlags`] = this.handleManageFlags.bind(this);
     CONFIG.queries[`${modulePrefix}.manageModuleSettings`] =
       this.handleManageModuleSettings.bind(this);
+    CONFIG.queries[`${modulePrefix}.applyCutInTemplate`] = this.handleApplyCutInTemplate.bind(this);
 
     // Token manipulation queries
     CONFIG.queries[`${modulePrefix}.moveToken`] = this.handleMoveToken.bind(this);
@@ -1053,6 +1054,27 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to manage module settings: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Bulk-apply a Cinematic Cut-ins crit animation to many actors. GM-only.
+   */
+  async handleApplyCutInTemplate(data: any): Promise<any> {
+    try {
+      // SECURITY: Silent GM validation
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+
+      this.dataAccess.validateFoundryState();
+
+      return await this.dataAccess.applyCutInTemplate(data ?? {});
+    } catch (error) {
+      throw new Error(
+        `Failed to apply cut-in template: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

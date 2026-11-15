@@ -1,6 +1,8 @@
 import { Logger } from './logger.js';
 import { Config } from './config.js';
 import { FoundryConnector } from './foundry-connector.js';
+import type { ConnectionSummary } from './connection-registry.js';
+import { FilePreferredWorldStore } from './preferred-world-store.js';
 
 export interface FoundryQuery {
   method: string;
@@ -18,7 +20,7 @@ export class FoundryClient {
   private config: Config['foundry'];
   private connector: FoundryConnector;
 
-  constructor(config: Config['foundry'], logger: Logger) {
+  constructor(config: Config['foundry'], logger: Logger, serverVersion?: string) {
     this.config = config;
     this.logger = logger.child({ component: 'FoundryClient' });
 
@@ -26,6 +28,8 @@ export class FoundryClient {
     this.connector = new FoundryConnector({
       config: this.config,
       logger: this.logger,
+      serverVersion,
+      preferredWorldStore: new FilePreferredWorldStore(),
     });
   }
 
@@ -105,5 +109,17 @@ export class FoundryClient {
 
   isConnected(): boolean {
     return this.connector.isConnected();
+  }
+
+  /** Every Foundry world currently connected, with the active one flagged. */
+  async listWorlds(): Promise<ConnectionSummary[]> {
+    // Worlds on older modules don't announce themselves; ask them so they show by name.
+    await this.connector.identifyConnections();
+    return this.connector.listConnections();
+  }
+
+  /** Makes the matching world (title, world id or connection id) the one queries go to. */
+  selectWorld(query: string): ConnectionSummary {
+    return this.connector.selectConnection(query);
   }
 }

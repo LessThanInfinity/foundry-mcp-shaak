@@ -1,0 +1,80 @@
+<form class="mcp-status">
+  <section class="mcp-status-banner mcp-status-{{tone}}">
+    <div class="mcp-status-headline">{{headline}}</div>
+    <div class="mcp-status-detail">{{detail}}</div>
+  </section>
+
+  <section class="mcp-status-block">
+    <h3>This world</h3>
+    <dl class="mcp-status-facts">
+      <dt>World</dt>
+      <dd>{{world.title}} <span class="mcp-status-muted">({{world.id}})</span></dd>
+      <dt>System</dt>
+      <dd>{{world.systemId}} {{world.systemVersion}}, Foundry {{world.foundry}}</dd>
+      <dt>Bridge module</dt>
+      <dd>{{moduleVersion}}</dd>
+      <dt>Tools registered</dt>
+      <dd>
+        {{toolCount}}
+        {{#if hasCutInTool}}
+        <span class="mcp-status-yes">cut-in tool present</span>
+        {{else}}
+        <span class="mcp-status-no">cut-in tool missing (module out of date?)</span>
+        {{/if}}
+      </dd>
+    </dl>
+  </section>
+
+  <section class="mcp-status-block">
+    <h3>MCP server</h3>
+    <dl class="mcp-status-facts">
+      <dt>Address</dt>
+      <dd>{{server.host}}:{{server.port}}</dd>
+      <dt>Connection</dt>
+      <dd>{{server.transport}}</dd>
+      <dt>Server version</dt>
+      <dd>{{server.version}}</dd>
+    </dl>
+  </section>
+
+  <section class="mcp-status-block">
+    <h3>Connected worlds</h3>
+    {{#if hasWorlds}}
+    <table class="mcp-status-worlds">
+      <thead>
+        <tr><th>World</th><th>System</th><th>Module</th><th></th></tr>
+      </thead>
+      <tbody>
+        {{#each worlds}}
+        <tr class="{{#if active}}mcp-status-row-active{{/if}}">
+          <td>
+            {{label}}
+            {{#if you}}<span class="mcp-status-tag">this world</span>{{/if}}
+            <div class="mcp-status-muted">{{connectionId}} · {{transport}}{{#if address}} · {{address}}{{/if}}</div>
+          </td>
+          <td>{{system}}</td>
+          <td>{{moduleVersion}}</td>
+          <td>{{#if active}}<span class="mcp-status-tag mcp-status-tag-active">ACTIVE</span>{{else}}<span class="mcp-status-tag">standby</span>{{/if}}{{#if remembered}}<div class="mcp-status-muted" title="This is the world you last chose. It becomes active again whenever it reconnects.">remembered</div>{{/if}}</td>
+        </tr>
+        {{/each}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="mcp-status-muted">The server has not reported any connected worlds.</p>
+    {{/if}}
+  </section>
+
+  <footer class="mcp-status-actions">
+    {{#if canMakeActive}}
+    <button type="button" data-action="make-active"><i class="fas fa-bullseye"></i> Make this world active</button>
+    {{/if}}
+    {{#if canConnect}}
+    <button type="button" data-action="connect"><i class="fas fa-plug"></i> Connect</button>
+    {{/if}}
+    {{#if canDisconnect}}
+    <button type="button" data-action="disconnect"><i class="fas fa-power-off"></i> Disconnect</button>
+    {{/if}}
+    <button type="button" data-action="refresh"><i class="fas fa-sync"></i> Refresh</button>
+    <button type="button" data-action="copy"><i class="fas fa-copy"></i> Copy details</button>
+  </footer>
+</form>

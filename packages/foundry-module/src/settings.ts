@@ -1,5 +1,6 @@
 import { MODULE_ID, DEFAULT_CONFIG } from './constants.js';
 import type { BridgeConfig } from './socket-bridge.js';
+import { defineConnectionStatusApp } from './connection-status-app.js';
 
 export class ModuleSettings {
   private moduleId: string = MODULE_ID;
@@ -11,6 +12,16 @@ export class ModuleSettings {
     // ============================================================================
     // SETTINGS MENU - Detailed Configuration Dialog
     // ============================================================================
+
+    // Connection Status panel: is this world connected, and is it the one Claude talks to?
+    (game.settings as any).registerMenu(this.moduleId, 'connectionStatusMenu', {
+      name: 'Connection Status',
+      label: 'Open Connection Status',
+      hint: 'See whether this world is connected to the MCP server, whether it is the active world Claude is talking to, and which other worlds are connected.',
+      icon: 'fas fa-plug',
+      type: defineConnectionStatusApp(),
+      restricted: true,
+    });
 
     // Enhanced Creature Index submenu
     (game.settings as any).registerMenu(this.moduleId, 'enhancedIndexMenu', {
@@ -83,7 +94,8 @@ export class ModuleSettings {
 
         getData(): any {
           return {
-            autoStartService: game.settings.get(MODULE_ID, 'mapGenAutoStart') || true,
+            // Strict check: `|| true` here made the box show ticked even when the saved value was false.
+            autoStartService: game.settings.get(MODULE_ID, 'mapGenAutoStart') === true,
             mapGenQuality: game.settings.get(MODULE_ID, 'mapGenQuality') || 'low',
             connectionStatus: this.getConnectionStatus(),
             connectionStatusText: this.getConnectionStatusText(),
@@ -292,7 +304,7 @@ export class ModuleSettings {
       scope: 'world',
       config: false, // Hidden from main config, accessible via submenu only
       type: Boolean,
-      default: true,
+      default: false, // opt-in: otherwise every world load waits ~2 minutes for ComfyUI and warns if it isn't there
     });
 
     game.settings.register(this.moduleId, 'mapGenQuality', {

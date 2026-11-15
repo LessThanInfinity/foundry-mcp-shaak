@@ -4,6 +4,8 @@ import { QueryHandlers } from './queries.js';
 import { ModuleSettings } from './settings.js';
 import { CampaignHooks } from './campaign-hooks.js';
 import { ComfyUIManager } from './comfyui-manager.js';
+import { defineConnectionStatusApp } from './connection-status-app.js';
+import { buildStatusViewModel, type BridgeStatus, type StatusViewModel } from './bridge-status.js';
 // Connection control now handled through settings menu
 
 /**
@@ -52,6 +54,20 @@ class FoundryMCPBridge {
 
       // Expose data access globally for settings UI
       (window as any).foundryMCPBridge.dataAccess = this.queryHandlers.dataAccess;
+
+      // Public API for macros: game.modules.get('foundry-mcp-bridge').api
+      const moduleEntry = (game as any).modules?.get(MODULE_ID);
+      if (moduleEntry) {
+        moduleEntry.api = {
+          /** Applies a Cinematic Cut-ins crit animation (see the apply-cut-in macro). GM only. */
+          applyCutIn: async (input: any) => {
+            if (!game.user?.isGM) throw new Error('Only a GM can apply cut-ins');
+            return this.queryHandlers.dataAccess.applyCutInTemplate(input ?? {});
+          },
+          /** Opens the Connection Status panel. */
+          openStatus: () => this.openStatus(),
+        };
+      }
 
       this.isInitialized = true;
       console.log(`[${MODULE_ID}] Module initialized successfully`);
@@ -317,7 +333,55 @@ class FoundryMCPBridge {
       lastConnectionState: this.settings.getSetting('lastConnectionState'),
       lastActivity: this.lastActivity.toISOString(),
       heartbeatActive: this.heartbeatInterval !== null,
+      bridgeStatus: this.getBridgeStatus(),
     };
+  }
+
+  /** What the MCP server last reported: whether this world is active and who else is connected. */
+  getBridgeStatus(): BridgeStatus | null {
+    return this.socketBridge?.getBridgeStatus() ?? null;
+  }
+
+  /** Asks the MCP server to make this world the one Claude talks to. */
+  requestSelectWorld(): void {
+    if (!this.socketBridge?.isConnected()) {
+      throw new Error('This world is not connected to the MCP server');
+    }
+    this.socketBridge.requestSelectWorld();
+  }
+
+  private statusApp: any = null;
+
+  /** Opens the Connection Status panel (also reachable from the module's settings). */
+  openStatus(): void {
+    if (!this.statusApp) {
+      const App = defineConnectionStatusApp();
+      this.statusApp = new App();
+    }
+    void this.statusApp.render(true);
+  }
+
+  /** Everything the Connection Status panel shows, ready to render. */
+  getStatusViewModel(): StatusViewModel {
+    const g = game as any;
+    const info = this.socketBridge?.getConnectionInfo();
+    return buildStatusViewModel({
+      enabled: !!this.settings.getSetting('enabled'),
+      connectionState: this.socketBridge?.getConnectionState() ?? 'disconnected',
+      connectionType: info?.type ?? null,
+      host: String(this.settings.getSetting('serverHost') ?? 'localhost'),
+      port: Number(this.settings.getSetting('serverPort') ?? 31415),
+      world: {
+        title: String(g.world?.title ?? g.world?.id ?? ''),
+        id: String(g.world?.id ?? ''),
+        systemId: String(g.system?.id ?? ''),
+        systemVersion: String(g.system?.version ?? ''),
+        foundry: String(g.version ?? ''),
+      },
+      moduleVersion: String(g.modules?.get(MODULE_ID)?.version ?? ''),
+      methods: this.queryHandlers.getRegisteredMethods(),
+      bridgeStatus: this.getBridgeStatus(),
+    });
   }
 
   /**
